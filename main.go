@@ -8,13 +8,13 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/dgrijalva/jwt-go/request"
 	"github.com/julienschmidt/httprouter"
 	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -39,11 +39,16 @@ type Twit struct {
 
 type User struct {
 	ID        int       `json:"id"`
-	Name      string    `json:"name"`
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	Password  string    `json:"password"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type SignUpUser struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type UserCredentials struct {
@@ -60,6 +65,8 @@ type Token struct {
 }
 
 var db *sql.DB
+
+// ============== helpers and initializer ==============
 
 func init() {
 	var err error
@@ -90,6 +97,44 @@ func init() {
 		panic(err)
 	}
 }
+
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
+
+	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+
+		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor,
+			func(token *jwt.Token) (interface{}, error) {
+				return verifyKey, nil
+			})
+
+		if err == nil {
+			if token.Valid {
+				next(w, r, ps)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, "Token is not valid")
+			}
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, "Unauthorized access to this resource")
+		}
+
+	}
+}
+
+func ValidateUserAndJWTTokenMiddleware() {}
+
+// ============== routes and handlers ==============
 
 func AllTwits(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	// We only accept 'GET' method here
@@ -132,7 +177,24 @@ func AllTwits(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 }
 
 func Signup(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "Signup!\n")
+
+	var user SignUpUser
+
+	err := json.NewDecoder(r.Body).Decode(&user)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "Error in request")
+		return
+	}
+
+	hash, _ := HashPassword(user.Password)
+
+	_, err = db.Exec("INSERT INTO users (USERNAME, EMAIL, PASSWORD) VALUES ($1, $2, $3)", user.Username, user.Email, hash)
+	if err != nil {
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
 }
 
 func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -147,14 +209,23 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
-	// TODO: modify following hardcoded email and password check
-	if strings.ToLower(user.Email) != "test@test.com" {
-		if user.Password != "root" {
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Println("Error logging in")
-			fmt.Fprint(w, "Invalid credentials")
-			return
-		}
+	row := db.QueryRow("SELECT * FROM users WHERE email = $1 LIMIT 1", user.Email)
+
+	userDict := User{}
+	er := row.Scan(&userDict.ID, &userDict.Username, &userDict.Email, &userDict.Password, &userDict.CreatedAt)
+	switch {
+	case err == sql.ErrNoRows:
+		http.NotFound(w, r)
+		return
+	case er != nil:
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
+
+	if !CheckPasswordHash(user.Password, userDict.Password) {
+		w.WriteHeader(http.StatusForbidden)
+		http.Error(w, "Email and/or password do not match", http.StatusForbidden)
+		return
 	}
 
 	token := jwt.New(jwt.SigningMethodRS256)
@@ -233,33 +304,7 @@ func DeleteTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	fmt.Fprint(w, "DeleteTwit!\n")
 }
 
-func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
-
-	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-
-		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor,
-			func(token *jwt.Token) (interface{}, error) {
-				return verifyKey, nil
-			})
-
-		if err == nil {
-			if token.Valid {
-				next(w, r, ps)
-			} else {
-				w.WriteHeader(http.StatusUnauthorized)
-				fmt.Fprint(w, "Token is not valid")
-			}
-		} else {
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, "Unauthorized access to this resource")
-		}
-
-	}
-}
-
-func ValidateUserAndJWTTokenMiddleware() {
-	// TODO
-}
+// ============== main ==============
 
 func main() {
 	router := httprouter.New()
