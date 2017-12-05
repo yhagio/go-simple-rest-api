@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,20 +13,20 @@ import (
 )
 
 type Twit struct {
-	ID         int       `json:"id"`
-	User_id    int       `json:"user_id"`
-	Body       string    `json:"body"`
-	Created_at time.Time `json:"created_at"`
-	Updated_at time.Time `json:"updated_at"`
+	ID        int       `json:"id"`
+	UserId    int       `json:"user_id"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type User struct {
-	ID         int       `json:"id"`
-	Name       string    `json:"name"`
-	Username   string    `json:"username"`
-	Email      string    `json:"email"`
-	Password   string    `json:"password"`
-	Created_at time.Time `json:"created_at"`
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	Password  string    `json:"password"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 var db *sql.DB
@@ -44,7 +45,43 @@ func init() {
 }
 
 func AllTwits(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "AllTwits!\n")
+	// We only accept 'GET' method here
+	if r.Method != "GET" {
+		http.Error(w, http.StatusText(405), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get all twits from DB
+	rows, err := db.Query("SELECT * FROM twit")
+	if err != nil {
+		http.Error(w, http.StatusText(500), 500)
+		return
+	}
+	// Close the db connection at the end
+	defer rows.Close()
+
+	// Create twit object list
+	twits := make([]Twit, 0)
+	for rows.Next() {
+		twit := Twit{}
+		err := rows.Scan(&twit.ID, &twit.UserId, &twit.Body, &twit.CreatedAt, &twit.UpdatedAt) // order matters
+		if err != nil {
+			http.Error(w, http.StatusText(500), 500)
+			return
+		}
+		twits = append(twits, twit)
+	}
+	if err = rows.Err(); err != nil {
+		http.Error(w, http.StatusText(500), 500)
+		return
+	}
+
+	// Returns as JSON (List of Twit objects)
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(twits); err != nil {
+		panic(err)
+	}
 }
 
 func Signup(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -63,8 +100,36 @@ func CreateTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	fmt.Fprint(w, "CreateTwit!\n")
 }
 
-func OneTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "OneTwit!\n")
+func OneTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// We only accept 'GET' method here
+	if r.Method != "GET" {
+		http.Error(w, http.StatusText(405), http.StatusMethodNotAllowed)
+		return
+	}
+
+	twitID := ps.ByName("id")
+
+	// Get the specific twit from DB
+	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+
+	// Create twit object
+	twit := Twit{}
+	err := row.Scan(&twit.ID, &twit.UserId, &twit.Body, &twit.CreatedAt, &twit.UpdatedAt)
+	switch {
+	case err == sql.ErrNoRows:
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
+
+	// Returns as JSON (single Twit object)
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(twit); err != nil {
+		panic(err)
+	}
 }
 
 func UpdateTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

@@ -12,21 +12,30 @@ Simple CRUD REST API built with Go & PostgreSQL
 ```
 
 ```sql
+DROP TABLE twit;
+DROP TABLE users;
+
 CREATE TABLE users (
-   ID INT PRIMARY KEY     NOT NULL,
-   USERNAME       TEXT    NOT NULL,
-   EMAIL          TEXT    NOT NULL,
-   PASSWORD       TEXT    NOT NULL,
-   CREATED_AT     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   ID         SERIAL NOT NULL PRIMARY KEY,
+   USERNAME   TEXT   NOT NULL,
+   EMAIL      TEXT   NOT NULL,
+   PASSWORD   TEXT   NOT NULL,
+   CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE twit (
-   ID INT PRIMARY KEY    NOT NULL,
-   USER_ID        INT    NOT NULL,
-   BODY           TEXT   NOT NULL,
-   CREATED_AT     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-   UPDATED_AT     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   ID         SERIAL NOT NULL PRIMARY KEY,
+   USER_ID    INT    NOT NULL,
+   BODY       TEXT   NOT NULL,
+   CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+   UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+INSERT INTO users (USERNAME, EMAIL, PASSWORD) VALUES ('test', 'test@test.com', 'test');
+SELECT * FROM users;
+
+INSERT INTO twit (USER_ID, BODY) VALUES ('1', 'Hello World! First Twit!');
+SELECT * FROM twit;
 ```
 
 ```sh
@@ -41,7 +50,8 @@ CREATE TABLE twit (
 - [x] Pick a router standard or third party (httprouter)
 - [x] Define endpoints / routes
 - [x] Setup database tables
-- [ ] Create index handler (fetch all twits)
+- [x] Create index handler (fetch all twits)
+- [x] Create one twit handler (fetch one twit)
 - [ ] Create authentication
   - [ ] Create Signup
   - [ ] Create Login
