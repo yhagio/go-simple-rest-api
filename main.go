@@ -1,15 +1,32 @@
 package main
 
 import (
+	"crypto/rsa"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/dgrijalva/jwt-go"
+	"github.com/dgrijalva/jwt-go/request"
 	"github.com/julienschmidt/httprouter"
 	_ "github.com/lib/pq"
+)
+
+const (
+	// For simplicity these files are in the same folder as the app binary.
+	// You shouldn't do this in production.
+	privKeyPath = "app.rsa"     // `> openssl genrsa -out app.rsa 1024`
+	pubKeyPath  = "app.rsa.pub" // `> openssl rsa -in app.rsa -pubout > app.rsa.pub`
+)
+
+var (
+	verifyKey *rsa.PublicKey
+	signKey   *rsa.PrivateKey
 )
 
 type Twit struct {
@@ -29,6 +46,19 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserCredentials struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type Response struct {
+	Data string `json:"data"`
+}
+
+type Token struct {
+	Token string `json:"token"`
+}
+
 var db *sql.DB
 
 func init() {
@@ -42,6 +72,23 @@ func init() {
 		panic(err)
 	}
 	fmt.Println("You connected to your database.")
+
+	signBytes, err := ioutil.ReadFile(privKeyPath)
+	if err != nil {
+		panic(err)
+	}
+	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signBytes)
+	if err != nil {
+		panic(err)
+	}
+	verifyBytes, err := ioutil.ReadFile(pubKeyPath)
+	if err != nil {
+		panic(err)
+	}
+	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func AllTwits(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -89,7 +136,53 @@ func Signup(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 }
 
 func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "Login!\n")
+
+	var user UserCredentials
+
+	err := json.NewDecoder(r.Body).Decode(&user)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "Error in request")
+		return
+	}
+
+	// TODO: modify following hardcoded email and password check
+	if strings.ToLower(user.Email) != "test@test.com" {
+		if user.Password != "root" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Println("Error logging in")
+			fmt.Fprint(w, "Invalid credentials")
+			return
+		}
+	}
+
+	token := jwt.New(jwt.SigningMethodRS256)
+	claims := make(jwt.MapClaims)
+	claims["exp"] = time.Now().Add(time.Hour * time.Duration(1)).Unix()
+	claims["iat"] = time.Now().Unix()
+	token.Claims = claims
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintln(w, "Error extracting the key")
+		panic(err)
+	}
+
+	tokenString, err := token.SignedString(signKey)
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintln(w, "Error while signing the token")
+		panic(err)
+	}
+
+	response := Token{tokenString}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		panic(err)
+	}
 }
 
 func Logout(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -140,16 +233,44 @@ func DeleteTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	fmt.Fprint(w, "DeleteTwit!\n")
 }
 
+func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
+
+	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+
+		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor,
+			func(token *jwt.Token) (interface{}, error) {
+				return verifyKey, nil
+			})
+
+		if err == nil {
+			if token.Valid {
+				next(w, r, ps)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, "Token is not valid")
+			}
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, "Unauthorized access to this resource")
+		}
+
+	}
+}
+
+func ValidateUserAndJWTTokenMiddleware() {
+	// TODO
+}
+
 func main() {
 	router := httprouter.New()
 	router.GET("/", AllTwits)
 	router.POST("/signup", Signup)
 	router.POST("/login", Login)
 	router.GET("/logout", Logout)
-	router.POST("/twit", CreateTwit)
-	router.GET("/twit/:id", OneTwit)
-	router.PUT("/twit/:id", UpdateTwit)
-	router.DELETE("/twit/:id", DeleteTwit)
+	router.POST("/twit", ValidateJWTTokenMiddleware(CreateTwit)) // Needs Authorization header 'Bearer [token]'
+	router.GET("/twit/:id", ValidateJWTTokenMiddleware(OneTwit))
+	router.PUT("/twit/:id", ValidateJWTTokenMiddleware(UpdateTwit))
+	router.DELETE("/twit/:id", ValidateJWTTokenMiddleware(DeleteTwit))
 
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
