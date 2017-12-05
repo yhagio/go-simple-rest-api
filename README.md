@@ -1,5 +1,7 @@
-# Simple REST API
+# Simple REST API with Go (Practice)
 Simple CRUD REST API built with Go & PostgreSQL
+
+![alt text](https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS1ykK7EvxhHcf3_fo1Bgkpu2tZJXFNgBuFaCmtwwfbCMTC43uVQw "Go")
 
 ### Third party libraries
 - [julienschmidt/httprouter](github.com/julienschmidt/httprouter)
