@@ -57,8 +57,8 @@ SELECT * FROM twit;
 - [x] Create authentication
   - [x] Create Signup
   - [x] Create Login
-  - [ ] Create Logout
+  - [x] Create Logout
 - [x] Create authorization middleware
 - [x] Create POST twit
-- [ ] Create EDIT twit
-- [ ] Create DELETE twit
+- [x] Create EDIT twit
+- [x] Create DELETE twit
