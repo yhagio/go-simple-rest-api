@@ -54,11 +54,11 @@ SELECT * FROM twit;
 - [x] Setup database tables
 - [x] Create index handler (fetch all twits)
 - [x] Create one twit handler (fetch one twit)
-- [ ] Create authentication
-  - [ ] Create Signup
-  - [ ] Create Login
+- [x] Create authentication
+  - [x] Create Signup
+  - [x] Create Login
   - [ ] Create Logout
-- [ ] Create authorization middleware
-- [ ] Create POST twit
+- [x] Create authorization middleware
+- [x] Create POST twit
 - [ ] Create EDIT twit
 - [ ] Create DELETE twit

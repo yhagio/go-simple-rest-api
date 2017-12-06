@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"database/sql"
 	"encoding/json"
@@ -56,12 +57,12 @@ type UserCredentials struct {
 	Password string `json:"password"`
 }
 
-type Response struct {
-	Data string `json:"data"`
-}
-
 type Token struct {
 	Token string `json:"token"`
+}
+
+type CreatingTwit struct {
+	Body string `json:"body"`
 }
 
 var db *sql.DB
@@ -111,6 +112,12 @@ func CheckPasswordHash(password, hash string) bool {
 func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
 
 	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+		// If we use cookie:
+		// _, er := r.Cookie("Auth")
+		// if er != nil {
+		// 	w.WriteHeader(http.StatusUnauthorized)
+		// 	fmt.Fprint(w, "Token is not valid")
+		// }
 
 		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor,
 			func(token *jwt.Token) (interface{}, error) {
@@ -119,6 +126,20 @@ func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
 
 		if err == nil {
 			if token.Valid {
+				claims, ok := token.Claims.(jwt.MapClaims)
+				if !ok || !token.Valid {
+					w.WriteHeader(http.StatusUnauthorized)
+					fmt.Fprint(w, "Token is not valid")
+				}
+
+				// We want to pass user_id extracted from JWT token to next handler:
+				// Take the context out from the request
+				ctx := r.Context()
+				// Get new context with key-value "user_id" -> "2" for example
+				ctx = context.WithValue(ctx, "user_id", claims["user_id"])
+				// Get new http.Request with the new context
+				r = r.WithContext(ctx)
+
 				next(w, r, ps)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -131,8 +152,6 @@ func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
 
 	}
 }
-
-func ValidateUserAndJWTTokenMiddleware() {}
 
 // ============== routes and handlers ==============
 
@@ -232,6 +251,7 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	claims := make(jwt.MapClaims)
 	claims["exp"] = time.Now().Add(time.Hour * time.Duration(1)).Unix()
 	claims["iat"] = time.Now().Unix()
+	claims["user_id"] = userDict.ID
 	token.Claims = claims
 
 	if err != nil {
@@ -241,6 +261,11 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	}
 
 	tokenString, err := token.SignedString(signKey)
+
+	// Set Cookie (Maybe not needed?)
+	expireCookie := time.Now().Add(time.Hour * 1)
+	cookie := http.Cookie{Name: "Auth", Value: tokenString, Expires: expireCookie, HttpOnly: true}
+	http.SetCookie(w, &cookie)
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -257,11 +282,32 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 }
 
 func Logout(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "Logout!\n")
+	// We don't need logout since it just needs to delete token from client (browser)
+	// But we can delete cookie if we use it
+	deleteCookie := http.Cookie{Name: "Auth", Value: "none", Expires: time.Now()}
+	http.SetCookie(w, &deleteCookie)
+	return
 }
 
 func CreateTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "CreateTwit!\n")
+	// Get user_id from decoded JWT token
+	userId := r.Context().Value("user_id")
+
+	var twit CreatingTwit
+
+	err := json.NewDecoder(r.Body).Decode(&twit)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "Error in request")
+		return
+	}
+
+	_, err = db.Exec("INSERT INTO twit (USER_ID, BODY) VALUES ($1, $2)", userId, twit.Body)
+	if err != nil {
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
 }
 
 func OneTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -296,12 +342,82 @@ func OneTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	}
 }
 
-func UpdateTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "UpdateTwit!\n")
+func UpdateTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// Get user_id from decoded JWT token
+	// Needs to convert float64 to int for the value from context
+	rawUserId := r.Context().Value("user_id").(float64)
+	userId := int(rawUserId)
+
+	// Check if the user is the author of the twit
+	twitID := ps.ByName("id")
+	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+	// Create twit object
+	updatingTwit := Twit{}
+	er := row.Scan(&updatingTwit.ID, &updatingTwit.UserId, &updatingTwit.Body, &updatingTwit.CreatedAt, &updatingTwit.UpdatedAt)
+	switch {
+	case er == sql.ErrNoRows:
+		http.NotFound(w, r)
+		return
+	case er != nil:
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
+
+	if updatingTwit.UserId != userId {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "Unauthorized access to this resource")
+		return
+	}
+
+	var twit CreatingTwit
+
+	err := json.NewDecoder(r.Body).Decode(&twit)
+
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "Error in request")
+		return
+	}
+
+	_, err = db.Exec("UPDATE twit SET body = $1 WHERE id = $2", twit.Body, updatingTwit.ID)
+	if err != nil {
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
 }
 
-func DeleteTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, "DeleteTwit!\n")
+func DeleteTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// Get user_id from decoded JWT token
+	// Needs to convert float64 to int for the value from context
+	rawUserId := r.Context().Value("user_id").(float64)
+	userId := int(rawUserId)
+
+	// Check if the user is the author of the twit
+	twitID := ps.ByName("id")
+	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+	// Create twit object
+	deletingTwit := Twit{}
+	er := row.Scan(&deletingTwit.ID, &deletingTwit.UserId, &deletingTwit.Body, &deletingTwit.CreatedAt, &deletingTwit.UpdatedAt)
+	switch {
+	case er == sql.ErrNoRows:
+		http.NotFound(w, r)
+		return
+	case er != nil:
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
+
+	if deletingTwit.UserId != userId {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "Unauthorized access to this resource")
+		return
+	}
+
+	_, err := db.Exec("DELETE FROM twit WHERE id = $1", deletingTwit.ID)
+	if err != nil {
+		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
+		return
+	}
 }
 
 // ============== main ==============
