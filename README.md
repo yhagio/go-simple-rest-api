@@ -47,6 +47,12 @@ SELECT * FROM twit;
 > SELECT * FROM twit;
 ```
 
+
+### To run
+```sh
+go run main.go handlers.go helpers.go
+```
+
 ### TODO
 - [x] Install Postgres
 - [x] Pick a router standard or third party (httprouter)
