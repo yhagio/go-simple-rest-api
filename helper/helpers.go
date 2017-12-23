@@ -1,4 +1,4 @@
-package main
+package helper
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/dgrijalva/jwt-go/request"
 	"github.com/julienschmidt/httprouter"
+	"github.com/yhagio/go-twit/config"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -33,7 +34,7 @@ func ValidateJWTTokenMiddleware(next httprouter.Handle) httprouter.Handle {
 
 		token, err := request.ParseFromRequest(r, request.AuthorizationHeaderExtractor,
 			func(token *jwt.Token) (interface{}, error) {
-				return verifyKey, nil
+				return config.VerifyKey, nil
 			})
 
 		if err == nil {

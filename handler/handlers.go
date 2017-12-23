@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"database/sql"
@@ -10,6 +10,8 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/julienschmidt/httprouter"
 	_ "github.com/lib/pq"
+	"github.com/yhagio/go-twit/config"
+	"github.com/yhagio/go-twit/helper"
 )
 
 type Twit struct {
@@ -55,7 +57,7 @@ func AllTwits(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	}
 
 	// Get all twits from DB
-	rows, err := db.Query("SELECT * FROM twit")
+	rows, err := config.DB.Query("SELECT * FROM twit")
 	if err != nil {
 		http.Error(w, http.StatusText(500), 500)
 		return
@@ -99,9 +101,9 @@ func Signup(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
-	hash, _ := HashPassword(user.Password)
+	hash, _ := helper.HashPassword(user.Password)
 
-	_, err = db.Exec("INSERT INTO users (USERNAME, EMAIL, PASSWORD) VALUES ($1, $2, $3)", user.Username, user.Email, hash)
+	_, err = config.DB.Exec("INSERT INTO users (USERNAME, EMAIL, PASSWORD) VALUES ($1, $2, $3)", user.Username, user.Email, hash)
 	if err != nil {
 		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
 		return
@@ -120,7 +122,7 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
-	row := db.QueryRow("SELECT * FROM users WHERE email = $1 LIMIT 1", user.Email)
+	row := config.DB.QueryRow("SELECT * FROM users WHERE email = $1 LIMIT 1", user.Email)
 
 	userDict := User{}
 	er := row.Scan(&userDict.ID, &userDict.Username, &userDict.Email, &userDict.Password, &userDict.CreatedAt)
@@ -133,7 +135,7 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
-	if !CheckPasswordHash(user.Password, userDict.Password) {
+	if !helper.CheckPasswordHash(user.Password, userDict.Password) {
 		w.WriteHeader(http.StatusForbidden)
 		http.Error(w, "Email and/or password do not match", http.StatusForbidden)
 		return
@@ -152,7 +154,7 @@ func Login(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		panic(err)
 	}
 
-	tokenString, err := token.SignedString(signKey)
+	tokenString, err := token.SignedString(config.SignKey)
 
 	// Set Cookie (Maybe not needed?)
 	expireCookie := time.Now().Add(time.Hour * 1)
@@ -195,7 +197,7 @@ func CreateTwit(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		return
 	}
 
-	_, err = db.Exec("INSERT INTO twit (USER_ID, BODY) VALUES ($1, $2)", userId, twit.Body)
+	_, err = config.DB.Exec("INSERT INTO twit (USER_ID, BODY) VALUES ($1, $2)", userId, twit.Body)
 	if err != nil {
 		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
 		return
@@ -212,7 +214,7 @@ func OneTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	twitID := ps.ByName("id")
 
 	// Get the specific twit from DB
-	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+	row := config.DB.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
 
 	// Create twit object
 	twit := Twit{}
@@ -242,7 +244,7 @@ func UpdateTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	// Check if the user is the author of the twit
 	twitID := ps.ByName("id")
-	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+	row := config.DB.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
 	// Create twit object
 	updatingTwit := Twit{}
 	er := row.Scan(&updatingTwit.ID, &updatingTwit.UserId, &updatingTwit.Body, &updatingTwit.CreatedAt, &updatingTwit.UpdatedAt)
@@ -271,7 +273,7 @@ func UpdateTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		return
 	}
 
-	_, err = db.Exec("UPDATE twit SET body = $1 WHERE id = $2", twit.Body, updatingTwit.ID)
+	_, err = config.DB.Exec("UPDATE twit SET body = $1 WHERE id = $2", twit.Body, updatingTwit.ID)
 	if err != nil {
 		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
 		return
@@ -286,7 +288,7 @@ func DeleteTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	// Check if the user is the author of the twit
 	twitID := ps.ByName("id")
-	row := db.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
+	row := config.DB.QueryRow("SELECT * FROM twit WHERE id = $1", twitID)
 	// Create twit object
 	deletingTwit := Twit{}
 	er := row.Scan(&deletingTwit.ID, &deletingTwit.UserId, &deletingTwit.Body, &deletingTwit.CreatedAt, &deletingTwit.UpdatedAt)
@@ -305,7 +307,7 @@ func DeleteTwit(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		return
 	}
 
-	_, err := db.Exec("DELETE FROM twit WHERE id = $1", deletingTwit.ID)
+	_, err := config.DB.Exec("DELETE FROM twit WHERE id = $1", deletingTwit.ID)
 	if err != nil {
 		http.Error(w, http.StatusText(500), http.StatusInternalServerError)
 		return
